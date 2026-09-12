@@ -1,17 +1,9 @@
-# Pay-Pilot Backend — Sandbox Hosting Build
+# Pay-Pilot Connected Accounts backend
 
-This is the deploy-ready Sandbox backend for Pay-Pilot + Plaid.
+This is the **Sandbox foundation**, not production storage.
 
-## Required environment variables
-- PLAID_CLIENT_ID
-- PLAID_SECRET
-- PLAID_ENV=sandbox
+1. Copy `.env.example` to `.env` and add Plaid Sandbox credentials.
+2. Run `npm install` then `npm start`.
+3. Keep `.env` private. Never put `PLAID_SECRET` in the Android/WebView app.
 
-Do not commit `.env` or Plaid secrets to GitHub.
-
-## Start locally
-npm install
-npm start
-
-## Production warning
-The current access-token store is intentionally in-memory for Sandbox testing only. Before connecting real customer accounts, add authentication and encrypted persistent per-user token storage.
+Before production: add authentication, encrypted database storage, per-user token ownership, webhook verification, transaction sync persistence, rate limiting, monitoring, and deletion/export flows.
