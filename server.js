@@ -1,188 +1,23 @@
-require("dotenv").config();
-
-const express = require("express");
-const cors = require("cors");
-const {Pool} = require ("pg");
-const {
-  Configuration,
-  PlaidApi,
-  PlaidEnvironments,
-  Products,
-  CountryCode,
-} = require("plaid");
-
-const app = express();
-
-app.use(cors());
-app.use(express.json());
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-async function initDatabase() {
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS plaid_items (
-        id SERIAL PRIMARY KEY,
-        item_id TEXT UNIQUE NOT NULL,
-        access_token TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    console.log("Pay-Pilot database ready");
-  } catch (error) {
-    console.error("Database setup error:", error.message);
-  }
-}
-
-initDatabase();
-const configuration = new Configuration({
-  basePath: PlaidEnvironments.sandbox,
-  baseOptions: {
-    headers: {
-      "PLAID-CLIENT-ID": process.env.PLAID_CLIENT_ID,
-      "PLAID-SECRET": process.env.PLAID_SECRET,
-    },
-  },
-});
-
-const plaidClient = new PlaidApi(configuration);
-
-// Simple test so we know Pay-Pilot's backend is alive.
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    app: "Pay-Pilot",
-    plaidEnvironment: "sandbox",
-  });
-});
-
-// Creates the token Pay-Pilot will use to open Plaid Link.
-app.post("/api/create_link_token", async (req, res) => {
-  try {
-    const response = await plaidClient.linkTokenCreate({
-      user: {
-        client_user_id: "pay-pilot-sandbox-user",
-      },
-      client_name: "Pay-Pilot",
-      products: [Products.Transactions],
-      country_codes: [CountryCode.Us],
-      language: "en",
-    });
-
-    res.json({
-      link_token: response.data.link_token,
-    });
-  } catch (error) {
-    console.error(
-      "Plaid error:",
-      error.response?.data || error.message
-    );
-
-    res.status(500).json({
-      error: "Unable to create Plaid Link token",
-      details: error.response?.data || error.message,
-    });
-  }
-});
-app.post("/api/exchange_public_token", async (req, res) => {
-  try {
-    const { public_token } = req.body;
-
-    if (!public_token) {
-      return res.status(400).json({
-        error: "public_token is required",
-      });
-    }
-
-    const response = await plaidClient.itemPublicTokenExchange({
-      public_token,
-    });
-
-    const accessToken = response.data.access_token;
-    const itemId = response.data.item_id;
-
-    // Sandbox testing only — we'll replace this with
-    // secure database storage before using real accounts.
-   await pool.query(
-  `INSERT INTO plaid_items (item_id, access_token)
-   VALUES ($1, $2)
-   ON CONFLICT (item_id)
-   DO UPDATE SET
-     access_token = EXCLUDED.access_token,
-     updated_at = CURRENT_TIMESTAMP`,
-  [itemId, accessToken]
-);
-
-    res.json({
-      success: true,
-      item_id: itemId,
-    });
-  } catch (error) {
-    console.error(
-      "Plaid token exchange error:",
-      error.response?.data || error.message
-    );
-
-    res.status(500).json({
-      error: "Unable to exchange Plaid public token",
-      details: error.response?.data || error.message,
-    });
-  }
-});
-app.get("/api/accounts", async (req, res) => {
-  try {
-    const tokenResult = await pool.query(
-  `SELECT access_token
-   FROM plaid_items
-   ORDER BY updated_at DESC
-   LIMIT 1`
-);
-
-if (tokenResult.rows.length === 0) {
-  return res.status(400).json({
-    error: "No bank account connected yet",
-  });
-}
-
-const accessToken = tokenResult.rows[0].access_token;
-
-    const response = await plaidClient.accountsBalanceGet({
-      access_token: accessToken,
-    });
-
-    const accounts = response.data.accounts.map((account) => ({
-      account_id: account.account_id,
-      name: account.name,
-      official_name: account.official_name,
-      mask: account.mask,
-      type: account.type,
-      subtype: account.subtype,
-      available: account.balances.available,
-      current: account.balances.current,
-      currency: account.balances.iso_currency_code,
-    }));
-
-    res.json({
-      success: true,
-      accounts,
-    });
-  } catch (error) {
-    console.error(
-      "Plaid accounts error:",
-      error.response?.data || error.message
-    );
-
-    res.status(500).json({
-      error: "Unable to retrieve accounts",
-      details: error.response?.data || error.message,
-    });
-  }
-});
-const PORT = process.env.PORT || 3001;
-
-app.listen(PORT, () => {
-  console.log(`Pay-Pilot backend running on port ${PORT}`);
-});
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import pg from 'pg';
+import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
+const app=express(); app.use(cors()); app.use(express.json());
+const env=process.env.PLAID_ENV||'sandbox';
+const config=new Configuration({basePath:PlaidEnvironments[env],baseOptions:{headers:{'PLAID-CLIENT-ID':process.env.PLAID_CLIENT_ID,'PLAID-SECRET':process.env.PLAID_SECRET}}});
+const plaid=new PlaidApi(config);
+const pool=process.env.DATABASE_URL?new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.NODE_ENV==='production'?{rejectUnauthorized:false}:undefined}):null;
+const memory=new Map();
+async function init(){if(pool)await pool.query(`CREATE TABLE IF NOT EXISTS plaid_items (user_id TEXT NOT NULL,item_id TEXT PRIMARY KEY,access_token TEXT NOT NULL,institution_id TEXT,institution_name TEXT,created_at TIMESTAMPTZ DEFAULT NOW(),updated_at TIMESTAMPTZ DEFAULT NOW())`)}
+async function putItem(x){if(pool){await pool.query(`INSERT INTO plaid_items(user_id,item_id,access_token,institution_id,institution_name) VALUES($1,$2,$3,$4,$5) ON CONFLICT(item_id) DO UPDATE SET access_token=EXCLUDED.access_token,institution_id=EXCLUDED.institution_id,institution_name=EXCLUDED.institution_name,updated_at=NOW()`,[x.userId,x.itemId,x.accessToken,x.institutionId||null,x.institutionName||null])}else{const a=memory.get(x.userId)||[];memory.set(x.userId,[...a.filter(i=>i.itemId!==x.itemId),x])}}
+async function getItems(userId){if(pool){const r=await pool.query('SELECT * FROM plaid_items WHERE user_id=$1 ORDER BY created_at',[userId]);return r.rows.map(x=>({userId:x.user_id,itemId:x.item_id,accessToken:x.access_token,institutionId:x.institution_id,institutionName:x.institution_name}))}return memory.get(userId)||[]}
+async function delItem(userId,itemId){if(pool)await pool.query('DELETE FROM plaid_items WHERE user_id=$1 AND item_id=$2',[userId,itemId]);else memory.set(userId,(memory.get(userId)||[]).filter(x=>x.itemId!==itemId))}
+app.get('/',(req,res)=>res.json({status:'ok',app:'Pay-Pilot',plaidEnvironment:env,multiBank:true}));
+app.get('/health',(req,res)=>res.json({ok:true,environment:env,multiBank:true,database:!!pool}));
+app.post('/api/plaid/create-link-token',async(req,res)=>{try{const r=await plaid.linkTokenCreate({user:{client_user_id:String(req.body.userId||'paypilot-local-user')},client_name:'Pay-Pilot',products:[Products.Transactions],country_codes:[CountryCode.Us],language:'en'});res.json({link_token:r.data.link_token})}catch(e){console.error(e.response?.data||e);res.status(500).json({error:'link_token_failed'})}});
+app.post('/api/plaid/exchange-public-token',async(req,res)=>{try{const userId=String(req.body.userId||'paypilot-local-user');const r=await plaid.itemPublicTokenExchange({public_token:req.body.public_token});const m=req.body.metadata||{};await putItem({userId,itemId:r.data.item_id,accessToken:r.data.access_token,institutionId:m.institution?.institution_id||'',institutionName:m.institution?.name||''});res.json({connected:true,item_id:r.data.item_id,institution:m.institution?.name||null})}catch(e){console.error(e.response?.data||e);res.status(500).json({error:'token_exchange_failed'})}});
+app.get('/api/plaid/accounts/:userId',async(req,res)=>{try{const items=await getItems(req.params.userId);if(!items.length)return res.json({accounts:[],items:[]});const accounts=[];for(const item of items){try{const r=await plaid.accountsGet({access_token:item.accessToken});for(const a of r.data.accounts)accounts.push({...a,item_id:item.itemId,institution_id:item.institutionId,institution_name:item.institutionName||'Connected institution'})}catch(e){console.error('accounts item failed',item.itemId,e.response?.data||e)}}res.json({accounts,items:items.map(i=>({item_id:i.itemId,institution_id:i.institutionId,institution_name:i.institutionName}))})}catch(e){console.error(e);res.status(500).json({error:'accounts_failed'})}});
+app.delete('/api/plaid/items/:userId/:itemId',async(req,res)=>{try{const items=await getItems(req.params.userId);const item=items.find(x=>x.itemId===req.params.itemId);if(item){try{await plaid.itemRemove({access_token:item.accessToken})}catch(e){console.error('Plaid remove warning',e.response?.data||e)}await delItem(req.params.userId,req.params.itemId)}res.json({disconnected:true})}catch(e){res.status(500).json({error:'disconnect_failed'})}});
+app.get('/api/plaid/transactions/:userId',async(req,res)=>{try{const items=await getItems(req.params.userId);const start_date=req.query.start_date||new Date(Date.now()-180*86400000).toISOString().slice(0,10),end_date=req.query.end_date||new Date().toISOString().slice(0,10);const transactions=[];for(const item of items){try{const r=await plaid.transactionsGet({access_token:item.accessToken,start_date,end_date,options:{count:250,offset:0}});transactions.push(...r.data.transactions.map(t=>({...t,item_id:item.itemId,institution_name:item.institutionName||'Connected institution'})))}catch(e){console.error('transactions item failed',item.itemId,e.response?.data||e)}}res.json({transactions})}catch(e){res.status(500).json({error:'transactions_failed'})}});
+const port=Number(process.env.PORT||8787);init().then(()=>app.listen(port,()=>console.log('Pay-Pilot backend listening on '+port))).catch(e=>{console.error('Database init failed',e);process.exit(1)});
