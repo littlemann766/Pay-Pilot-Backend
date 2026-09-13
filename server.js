@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.4.3';
+const APP_VERSION = '9.4.5';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
@@ -158,19 +158,38 @@ function requirePlaid(res) {
   return false;
 }
 
+async function plaidRaw(path, body) {
+  const response = await fetch(plaidEnv + path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'PLAID-CLIENT-ID': process.env.PLAID_CLIENT_ID || '',
+      'PLAID-SECRET': process.env.PLAID_SECRET || '',
+    },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const err = new Error(data.display_message || data.error_message || data.error_code || `Plaid request failed (${response.status})`);
+    err.response = { data, status: response.status };
+    throw err;
+  }
+  return data;
+}
+
 async function exchangeAndStore(userId, publicToken, metadata = {}) {
-  const exchange = await plaid.itemPublicTokenExchange({ public_token: publicToken });
+  const exchange = await plaidRaw('/item/public_token/exchange', { public_token: publicToken });
   const institution = metadata?.institution || {};
   await putItem({
     userId,
-    itemId: exchange.data.item_id,
-    accessToken: exchange.data.access_token,
-    institutionId: institution.institution_id || '',
+    itemId: exchange.item_id,
+    accessToken: exchange.access_token,
+    institutionId: institution.institution_id || institution.id || '',
     institutionName: institution.name || '',
   });
   return {
     connected: true,
-    item_id: exchange.data.item_id,
+    item_id: exchange.item_id,
     institution: institution.name || null,
   };
 }
@@ -261,20 +280,28 @@ app.get('/api/plaid/hosted-status/:userId', async (req, res) => {
   const userId = String(req.params.userId || '');
   try {
     const linkToken = await getPending(userId);
-    if (!linkToken) return res.json({ connected: false, pending: false, error: 'No pending bank connection was found.' });
+    if (!linkToken) {
+      return res.json({ connected: false, pending: false, status: 'missing', error: 'No pending bank connection was found.' });
+    }
 
-    const status = await plaid.linkTokenGet({ link_token: linkToken });
-    const data = status.data || {};
+    // Hosted Link does not return public_token to the app. Read the completed
+    // Link session directly from Plaid. Using the raw REST response here avoids
+    // SDK model/version mismatches and preserves results.item_add_results.
+    const data = await plaidRaw('/link/token/get', { link_token: linkToken });
     const sessions = Array.isArray(data.link_sessions) ? data.link_sessions : [];
     const session = sessions.length ? sessions[sessions.length - 1] : null;
+
+    if (!session) {
+      return res.json({ connected: false, pending: true, status: 'waiting_for_session' });
+    }
 
     const itemResults = Array.isArray(session?.results?.item_add_results)
       ? session.results.item_add_results
       : [];
-    const legacySuccess = session?.on_success || null;
-    const successes = itemResults.length
-      ? itemResults
-      : (legacySuccess?.public_token ? [{ public_token: legacySuccess.public_token, metadata: legacySuccess.metadata || {} }] : []);
+    const legacy = session?.on_success?.public_token
+      ? [{ public_token: session.on_success.public_token, metadata: session.on_success.metadata || {} }]
+      : [];
+    const successes = itemResults.length ? itemResults : legacy;
 
     if (successes.length) {
       const connectedItems = [];
@@ -282,7 +309,7 @@ app.get('/api/plaid/hosted-status/:userId', async (req, res) => {
         const publicToken = result?.public_token;
         if (!publicToken) continue;
         const metadata = result?.metadata || {
-          institution: result?.institution || null,
+          institution: result?.institution || session?.on_success?.metadata?.institution || null,
           accounts: result?.accounts || [],
         };
         connectedItems.push(await exchangeAndStore(userId, publicToken, metadata));
@@ -291,6 +318,8 @@ app.get('/api/plaid/hosted-status/:userId', async (req, res) => {
         await clearPending(userId);
         return res.json({
           connected: true,
+          pending: false,
+          status: 'success',
           count: connectedItems.length,
           institution: connectedItems[0]?.institution || null,
           items: connectedItems,
@@ -298,18 +327,35 @@ app.get('/api/plaid/hosted-status/:userId', async (req, res) => {
       }
     }
 
-    const finished = Boolean(session?.finished_at);
-    if (finished) {
+    // The completion URI fires for both success and exit. finished_at tells us
+    // the Hosted Link session ended; on_exit contains the reason when available.
+    if (session?.finished_at) {
       const exit = session?.on_exit || session?.exit || {};
-      const error = exit?.error?.display_message || exit?.error?.error_message || exit?.error_message ||
-        'Bank connection was closed before an account was connected.';
+      const exitErr = exit?.error || {};
+      const message = exitErr?.display_message || exitErr?.error_message || exit?.error_message || null;
+      const status = message ? 'failed' : 'exited';
       await clearPending(userId);
-      return res.json({ connected: false, pending: false, error });
+      return res.json({
+        connected: false,
+        pending: false,
+        status,
+        error: message || 'The bank connection was closed before an account was connected.',
+        link_session_id: session?.link_session_id || null,
+      });
     }
 
-    return res.json({ connected: false, pending: true });
+    return res.json({ connected: false, pending: true, status: 'pending' });
   } catch (e) {
-    res.status(500).json({ error: plaidError(e, 'hosted_status_failed') });
+    const d = e?.response?.data || {};
+    console.error('Hosted Link status error:', d || e);
+    res.status(500).json({
+      connected: false,
+      pending: false,
+      status: 'error',
+      error: d?.display_message || d?.error_message || d?.error_code || e?.message || 'Could not read the Plaid session result.',
+      plaid_error_code: d?.error_code || null,
+      request_id: d?.request_id || null,
+    });
   }
 });
 
