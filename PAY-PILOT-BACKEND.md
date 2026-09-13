@@ -1,6 +1,6 @@
 # Pay-Pilot Backend — Authoritative Guide
 
-**Backend version:** 9.5.3
+**Backend version:** 9.5.4
 
 This is the single authoritative backend deployment document. Do not create separate `DEPLOY_9.x.x.md` files. Update this file whenever backend setup changes.
 
@@ -50,7 +50,7 @@ After deployment, open:
 https://pay-pilot-backend-production.up.railway.app/api/health
 ```
 
-Confirm the returned `version` is `9.5.3` before testing Connected Accounts.
+Confirm the returned `version` is `9.5.4` before testing Connected Accounts.
 
 ## Plaid flow
 Pay-Pilot uses Hosted Link. The working flow is:
@@ -75,3 +75,7 @@ Pay-Pilot supports multiple institutions. Canonical finance math is account-base
 - Keep backend `package.json`, `server.js` health/version output, and the paired app version aligned.
 - Update this file instead of creating a new deployment markdown file.
 - Verify `/api/health` before testing a new APK.
+
+
+## 9.5.4 transaction feed
+`GET /api/plaid/transactions/:userId` is the authoritative read-only transaction-history endpoint used by the Spending screen. Account and transaction identifiers must be returned unchanged so the app can deduplicate safely.

@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.5.3';
+const APP_VERSION = '9.5.4';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
@@ -86,7 +86,7 @@ async function initStorage() {
     await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
     await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
 
-    console.log('Pay-Pilot database schema verified for 9.5.3.');
+    console.log('Pay-Pilot database schema verified for 9.5.4.');
     dbReady = true;
     dbError = null;
     console.log('Pay-Pilot database connected.');
@@ -460,7 +460,8 @@ app.get('/api/plaid/transactions/:userId', async (req, res) => {
         console.error('transactions item failed', item.itemId, e.response?.data || e);
       }
     }
-    res.json({ transactions });
+    const deduped = [...new Map(transactions.map(t => [String(t.transaction_id || [t.item_id, t.account_id, t.date, t.name, t.amount].join('|')), t])).values()];
+    res.json({ transactions: deduped, fetched_at: new Date().toISOString() });
   } catch (e) {
     res.status(500).json({ error: 'transactions_failed' });
   }
