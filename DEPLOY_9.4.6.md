@@ -1,4 +1,4 @@
-# Pay-Pilot backend 9.4.6
+# Pay-Pilot backend 9.4.7
 
 Database migration release.
 
@@ -7,4 +7,4 @@ Database migration release.
 - Adds an index on `plaid_items.user_id`.
 - Keeps the working Plaid Hosted Link flow unchanged.
 
-After Railway deploys, `/api/health` should report version `9.4.6`.
+After Railway deploys, `/api/health` should report version `9.4.7`.
