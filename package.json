@@ -1,6 +1,6 @@
 {
   "name": "pay-pilot-backend",
-  "version": "9.4.9",
+  "version": "9.5.1",
   "private": true,
   "type": "module",
   "scripts": {
