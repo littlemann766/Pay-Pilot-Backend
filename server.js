@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.4.8';
+const APP_VERSION = '9.4.9';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
@@ -86,7 +86,7 @@ async function initStorage() {
     await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
     await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
 
-    console.log('Pay-Pilot database schema verified for 9.4.8.');
+    console.log('Pay-Pilot database schema verified for 9.4.9.');
     dbReady = true;
     dbError = null;
     console.log('Pay-Pilot database connected.');
