@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.4.5';
+const APP_VERSION = '9.4.6';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
@@ -55,20 +55,38 @@ async function initStorage() {
   }
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS plaid_items (
-      user_id TEXT NOT NULL,
+      user_id TEXT,
       item_id TEXT PRIMARY KEY,
-      access_token TEXT NOT NULL,
+      access_token TEXT,
       institution_id TEXT,
       institution_name TEXT,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+
+    // Existing Railway databases may have been created by an older Pay-Pilot
+    // backend. CREATE TABLE IF NOT EXISTS does not add columns to an existing
+    // table, so apply idempotent migrations before any Plaid item is saved.
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS user_id TEXT');
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS access_token TEXT');
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS institution_id TEXT');
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS institution_name TEXT');
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
+    await pool.query('ALTER TABLE plaid_items ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
+    await pool.query('CREATE INDEX IF NOT EXISTS plaid_items_user_id_idx ON plaid_items(user_id)');
+
     await pool.query(`CREATE TABLE IF NOT EXISTS plaid_pending_links (
       user_id TEXT PRIMARY KEY,
       link_token TEXT NOT NULL,
       created_at TIMESTAMPTZ DEFAULT NOW(),
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
+    await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS user_id TEXT');
+    await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS link_token TEXT');
+    await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()');
+    await pool.query('ALTER TABLE plaid_pending_links ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW()');
+
+    console.log('Pay-Pilot database schema verified for 9.4.6.');
     dbReady = true;
     dbError = null;
     console.log('Pay-Pilot database connected.');
