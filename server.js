@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.5.8';
+const APP_VERSION = '9.9.5';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
