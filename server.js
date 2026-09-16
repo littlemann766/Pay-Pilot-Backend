@@ -4,7 +4,7 @@ import cors from 'cors';
 import pg from 'pg';
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from 'plaid';
 
-const APP_VERSION = '9.9.5';
+const APP_VERSION = '9.9.6';
 const app = express();
 
 // The Android app is served from appassets.androidplatform.net and the browser/PWA
@@ -402,6 +402,7 @@ app.get('/api/plaid/accounts/:userId', async (req, res) => {
         for (const a of r.data.accounts) {
           accounts.push({
             ...a,
+            credit_limit: a?.balances?.limit ?? null,
             item_id: item.itemId,
             institution_id: item.institutionId,
             institution_name: item.institutionName || 'Connected institution',
