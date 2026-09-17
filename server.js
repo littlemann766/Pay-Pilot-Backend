@@ -400,9 +400,33 @@ app.get('/api/plaid/accounts/:userId', async (req, res) => {
       try {
         const r = await plaid.accountsGet({ access_token: item.accessToken });
         for (const a of r.data.accounts) {
+          // Plaid is authoritative for connected-account balances. For credit
+          // accounts, balances.current is amount owed, balances.limit is the
+          // institution-provided credit limit, and balances.available is the
+          // institution-provided available credit when supplied.
+          const isCredit = String(a?.type || '').toLowerCase() === 'credit';
+          const current = Number(a?.balances?.current);
+          const available = Number(a?.balances?.available);
+          const directLimit = Number(a?.balances?.limit);
+          // Never manufacture a credit limit from current + available. Plaid notes
+          // that pending activity can make available differ from limit-current.
+          const creditLimit = isCredit && Number.isFinite(directLimit) && directLimit > 0 ? directLimit : null;
+          const balanceUsed = isCredit && Number.isFinite(current) ? Math.max(0, current) : null;
+          const availableCredit = isCredit
+            ? (Number.isFinite(available) && available >= 0
+                ? available
+                : (creditLimit != null && balanceUsed != null ? Math.max(0, creditLimit - balanceUsed) : null))
+            : null;
+          const utilization = isCredit && creditLimit > 0 && balanceUsed != null
+            ? Math.max(0, Math.min(100, (balanceUsed / creditLimit) * 100))
+            : null;
           accounts.push({
             ...a,
-            credit_limit: a?.balances?.limit ?? null,
+            credit_limit: creditLimit,
+            balance_used: balanceUsed,
+            available_credit: availableCredit,
+            utilization_percent: utilization,
+            balance_source: 'plaid_accounts_get',
             item_id: item.itemId,
             institution_id: item.institutionId,
             institution_name: item.institutionName || 'Connected institution',
